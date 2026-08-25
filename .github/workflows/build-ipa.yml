@@ -1,0 +1,55 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Unpack project source
+        run: ditto -x -k HearthRemote-source.zip .
+
+      - name: Generate private pairing identity
+        run: |
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+            -keyout "$RUNNER_TEMP/hearth-key.pem" \
+            -out "$RUNNER_TEMP/hearth-cert.pem" \
+            -days 3650 \
+            -subj "/CN=Hearth Remote/O=Local Only"
+          openssl x509 \
+            -in "$RUNNER_TEMP/hearth-cert.pem" \
+            -outform DER \
+            -out TVRemote/HearthRemoteClient.der
+          openssl pkcs12 -export \
+            -out TVRemote/HearthRemoteClient.p12 \
+            -inkey "$RUNNER_TEMP/hearth-key.pem" \
+            -in "$RUNNER_TEMP/hearth-cert.pem" \
+            -passout pass:hearth-remote-local
+
+      - name: Build device app
+        run: |
+          xcodebuild \
+            -project TVRemote.xcodeproj \
+            -scheme TVRemote \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/build"
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/TVRemote.app Payload/TVRemote.app
+          ditto -c -k --sequesterRsrc --keepParent Payload HearthRemote-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: HearthRemote-unsigned
+          path: HearthRemote-unsigned.ipa
+          if-no-files-found: error
